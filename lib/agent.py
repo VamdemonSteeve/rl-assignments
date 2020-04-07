@@ -1,6 +1,7 @@
 import copy
 from pathlib import Path
 import random
+import torch.optim as optim
 
 from gym.spaces import Discrete
 import numpy as np
@@ -43,7 +44,6 @@ class DQN(object):
             polyak_tau (float): softness of target network updates.
                 1.0 - hard copy of weights. 0.0 - no copying at all.
             cuda (bool): whether to use Cuda.
-
         """
         self.value_network = value_network
         self.target_network = copy.deepcopy(value_network)
@@ -64,16 +64,9 @@ class DQN(object):
             self.value_network.cuda()
             self.target_network.cuda()
 
-        ##########################################################################
-        ########                        TASK 2                            ########
-        ##########################################################################
-        # Define a loss (Huber loss is preferred) and Adam optimizer:            #
-        self.criterion = None
+        self.criterion = torch.nn.SmoothL1Loss().forward
 
-        self.optimizer = None
-        ##########################################################################
-        ########                        TASK 2                            ########
-        ##########################################################################
+        self.optimizer = optim.Adam(value_network.parameters(), lr=learning_rate)
 
     def update_target(self):
         polyak_update(
@@ -82,10 +75,13 @@ class DQN(object):
             self.tau
         )
 
-    def update_value(self, replay_buffer):
+    def update_value(self, replay_buffer, verbose=False):
         batch = replay_buffer.sample(self.batch_size)
         v_s0, v_a, v_s1, v_r, v_d = zip(*batch)
 
+        v_s0 = np.concatenate(v_s0)
+        v_s1 = np.concatenate(v_s1)
+        
         if self.cuda:
             FloatTensor = torch.cuda.FloatTensor
             LongTensor = torch.cuda.LongTensor
@@ -97,41 +93,37 @@ class DQN(object):
         v_a = LongTensor(v_a)
         v_s1 = FloatTensor(v_s1)
         v_r = FloatTensor(v_r)
-        v_d = FloatTensor(v_d)
+        v_d = FloatTensor(v_d) 
 
-        ##########################################################################
-        ########                        TASK 2                            ########
-        ##########################################################################
-        #   Here, you should implement the estimation of y_hat - predicted Q     #
-        # value and y - target, i.e. the right-hand side of Bellman equation     #
-
+        
         if not self.double:
-            pass
+            
+            q_values = self.value_network(v_s0)
+            q_predicted_next = self.value_network(v_s1)
+
+            q_values = q_values.gather(1, v_a.unsqueeze(1)).squeeze(1)
+            
+            q_target = v_r + self.discount_factor * q_predicted_next.max(1)[0] * (1 - v_d)
         else:
-            ##########################################################################
-            ########                        TASK 4                            ########
-            ##########################################################################
-            # Double DQN estimation                                                  #
-            pass
-            ##########################################################################
-            ########                        TASK 4                            ########
-            ##########################################################################
+            
+            q_values = self.value_network(v_s0)
+            next_q_values = self.target_network(v_s1)
 
-        y = None
-        y_hat = None
-        ##########################################################################
-        ########                        TASK 2                            ########
-        ##########################################################################
+            q_values = q_values.gather(1, v_a.unsqueeze(1)).squeeze(1)
+            next_q_value = next_q_values.gather(1, torch.max(next_q_values, 1)[1].unsqueeze(1)).squeeze(1)
+            q_target = v_r + self.discount_factor * next_q_value * (1 - v_d)
 
-        loss = self.criterion(y_hat, y)
+
+        
+        loss = self.criterion(q_target, q_values)
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
 
         return (
             loss.detach().cpu().item(),
-            y.detach().mean().cpu().item(),
-            y_hat.detach().mean().cpu().item()
+            q_values.detach().mean().cpu().item(),
+            q_target.detach().mean().cpu().item()
         )
 
     def pick_action(self, s, force_greedy=False):
@@ -142,10 +134,17 @@ class DQN(object):
         ##########################################################################
         # Implement epsilon-greedy policy using value_network. Also, you will    #
         # need to pick greedy actions if `force_greedy` is True                  #
-        return None
-        ##########################################################################
-        ########                        TASK 2                            ########
-        ##########################################################################
+        if force_greedy:
+            with torch.no_grad():
+                q_values = self.value_network(s)
+                return torch.argmax(q_values).item()
+        else:
+            if np.random.binomial(1, self.eps):
+                action = self.action_space.sample()
+            else:
+                actions = self.value_network.forward(s)
+                action = torch.argmax(actions).item()
+            return action
 
     def update_eps(self):
         self.eps = max(self.eps - self.eps_decay, 1e-2)

@@ -7,7 +7,7 @@ import torch.nn.functional as F
 ##########################################################################
 # Implement Fully-connected neural network with two layers               #
 class MLP(nn.Module):
-    def __init__(self, n_input, n_hidden, n_out):
+    def __init__(self, n_input, n_hidden, n_output):
         """
         Arguments:
             n_input: dimensionality of input space
@@ -15,10 +15,23 @@ class MLP(nn.Module):
             n_out: dimensionality of output space
         """
         super().__init__()
-        pass
-
+        
+        self.n_input = n_input
+        self.n_hidden = n_hidden
+        self.n_output = n_output
+        
+        self.fc1 = nn.Linear(n_input, n_hidden)
+        self.fc2 = nn.Linear(n_hidden, n_hidden)
+        self.out = nn.Linear(n_hidden, n_output)
+        
     def forward(self, x):
-        return x
+        x = torch.Tensor(x)
+        
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        actions = self.out(x)
+        
+        return actions
 ##########################################################################
 ########                        TASK 1                            ########
 ##########################################################################
@@ -29,10 +42,10 @@ class Flatten(nn.Module):
         return x.view(x.size(0), -1)
 
 
-def init(module, weight_init, bias_init, gain=1):
-    weight_init(module.weight.data, gain=gain)
-    bias_init(module.bias.data)
-    return module
+    def init(module, weight_init, bias_init, gain=1):
+        weight_init(module.weight.data, gain=gain)
+        bias_init(module.bias.data)
+        return module
 
 
 class NatureCNN(nn.Module):
